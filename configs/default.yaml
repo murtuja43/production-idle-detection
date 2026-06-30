@@ -1,0 +1,94 @@
+project:
+  name: production-idle-detection
+
+video:
+  output_dir: data/processed
+  output_fps: null
+  codec: mp4v
+  resize:
+    enabled: false
+    width: 1280
+    height: 720
+
+logging:
+  level: INFO
+  csv_dir: outputs
+  csv_filename: idle_detection_log.csv
+
+optical_flow:
+  pyr_scale: 0.5
+  levels: 3
+  winsize: 15
+  iterations: 3
+  poly_n: 5
+  poly_sigma: 1.2
+  flags: 0
+
+visualization:
+  enabled: true
+  draw_motion_heatmap: false
+  font_scale: 0.55
+  line_thickness: 2
+
+zones:
+  CMUS:
+    enabled: true
+    roi:
+      x: 60
+      y: 80
+      width: 260
+      height: 220
+    motion_threshold: 1.15
+    idle_duration_seconds: 8.0
+    sensitivity: 0.65
+    mask_path: null
+    spark_filter:
+      enabled: true
+      brightness_threshold: 230
+      min_component_area: 4
+      dilate_iterations: 1
+
+  COP:
+    enabled: true
+    roi:
+      x: 360
+      y: 80
+      width: 260
+      height: 220
+    motion_threshold: 0.85
+    idle_duration_seconds: 6.0
+    sensitivity: 1.0
+
+  COK:
+    enabled: true
+    roi:
+      x: 660
+      y: 80
+      width: 260
+      height: 220
+    motion_threshold: 0.9
+    idle_duration_seconds: 6.0
+    sensitivity: 1.0
+
+  CSK:
+    enabled: true
+    roi:
+      x: 60
+      y: 340
+      width: 260
+      height: 220
+    motion_threshold: 0.8
+    idle_duration_seconds: 7.0
+    sensitivity: 0.95
+
+  CSLT:
+    enabled: true
+    roi:
+      x: 360
+      y: 340
+      width: 260
+      height: 220
+    motion_threshold: 0.75
+    idle_duration_seconds: 7.0
+    sensitivity: 0.95
+

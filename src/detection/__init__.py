@@ -1,0 +1,2 @@
+"""Idle detection logic."""
+
