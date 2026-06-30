@@ -60,6 +60,20 @@ class Zone:
         """Return whether this zone is CMUS."""
         return self.name.upper() == "CMUS"
 
+    def ensure_within_frame(self, width: int, height: int) -> None:
+        """Raise if this ROI extends past a frame of the given size.
+
+        numpy slicing silently clamps an out-of-bounds ROI to a smaller crop,
+        which would both score the wrong region and break mask broadcasting, so
+        fail fast with a clear message instead.
+        """
+        if self.x2 > width or self.y2 > height:
+            raise ValueError(
+                f"Zone '{self.name}' ROI "
+                f"({self.x}, {self.y}, {self.width}, {self.height}) "
+                f"exceeds frame bounds {width}x{height}."
+            )
+
     def crop_array(self, array: np.ndarray) -> np.ndarray:
         """Return the ROI crop from an image-like array."""
         return array[self.y : self.y2, self.x : self.x2]

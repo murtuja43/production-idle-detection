@@ -14,7 +14,7 @@ class VideoProcessor:
     def __init__(
         self,
         input_path: Path,
-        output_path: Path,
+        output_path: Path | None = None,
         codec: str = "mp4v",
         output_fps: float | None = None,
         resize_enabled: bool = False,
@@ -34,6 +34,9 @@ class VideoProcessor:
         self.timestamp_seconds = 0.0
         self.frame_count = 0
         self.fps = 0.0
+        self.width = 0
+        self.height = 0
+        self._read_count = 0
 
     def __enter__(self) -> "VideoProcessor":
         self.open()
@@ -43,7 +46,7 @@ class VideoProcessor:
         self.close()
 
     def open(self) -> None:
-        """Open the input video and initialize output writer."""
+        """Open the input video and, if an output path is set, the writer."""
         self.capture = cv2.VideoCapture(str(self.input_path))
         if not self.capture.isOpened():
             raise ValueError(f"Could not open video: {self.input_path}")
@@ -52,17 +55,21 @@ class VideoProcessor:
         self.frame_count = int(self.capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         input_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         input_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = self.resize_width if self.resize_enabled else input_width
-        height = self.resize_height if self.resize_enabled else input_height
-        output_fps = self.output_fps or self.fps
+        self.width = self.resize_width if self.resize_enabled else input_width
+        self.height = self.resize_height if self.resize_enabled else input_height
+        self._read_count = 0
 
+        if self.output_path is None:
+            return
+
+        output_fps = self.output_fps or self.fps
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*self.codec)
         self.writer = cv2.VideoWriter(
             str(self.output_path),
             fourcc,
             output_fps,
-            (width, height),
+            (self.width, self.height),
         )
         if not self.writer.isOpened():
             raise ValueError(f"Could not open video writer: {self.output_path}")
@@ -75,10 +82,11 @@ class VideoProcessor:
         if not success:
             return None
 
-        self.current_frame_index = int(
-            self.capture.get(cv2.CAP_PROP_POS_FRAMES)
-        )
+        # POS_FRAMES reports the *next* frame after a read, so track a 0-based
+        # counter ourselves to keep frame indices and timestamps aligned.
+        self.current_frame_index = self._read_count
         self.timestamp_seconds = self.current_frame_index / max(self.fps, 1e-6)
+        self._read_count += 1
         if self.resize_enabled:
             frame = cv2.resize(frame, (self.resize_width, self.resize_height))
         return frame
@@ -86,7 +94,9 @@ class VideoProcessor:
     def write(self, frame: np.ndarray) -> None:
         """Write a processed frame to the output video."""
         if self.writer is None:
-            raise RuntimeError("VideoProcessor must be opened before writing.")
+            raise RuntimeError(
+                "VideoProcessor was opened without an output path; cannot write."
+            )
         self.writer.write(frame)
 
     def close(self) -> None:

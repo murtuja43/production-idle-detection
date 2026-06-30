@@ -95,6 +95,51 @@ class ZoneConfig:
 
 
 @dataclass(frozen=True)
+class DetectionConfig:
+    """Detection mode selection."""
+
+    mode: str  # one of VALID_MODES
+
+
+@dataclass(frozen=True)
+class FeatureConfig:
+    """Sliding-window motion feature settings shared by training and inference."""
+
+    window_size: int
+    step: int
+    features: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CombineConfig:
+    """How combined mode fuses optical-flow and ML signals."""
+
+    strategy: str  # one of VALID_COMBINE_STRATEGIES
+
+
+@dataclass(frozen=True)
+class MlConfig:
+    """ML inference settings (model location and combine policy)."""
+
+    model_path: str
+    metadata_path: str
+    combine: CombineConfig
+
+
+@dataclass(frozen=True)
+class TrainingConfig:
+    """Isolation Forest training hyperparameters and output paths."""
+
+    contamination: float | str
+    random_state: int
+    n_estimators: int
+    max_samples: int | float | str
+    feature_csv: str
+    model_output: str
+    metadata_output: str
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Top-level application config."""
 
@@ -103,9 +148,20 @@ class AppConfig:
     optical_flow: OpticalFlowConfig
     visualization: VisualizationConfig
     zones: dict[str, ZoneConfig]
+    detection: DetectionConfig
+    features: FeatureConfig
+    ml: MlConfig
+    training: TrainingConfig
 
 
 REQUIRED_ZONES = ("CMUS", "COP", "COK", "CSK", "CSLT")
+VALID_MODES = ("optical_flow", "ml", "combined")
+VALID_COMBINE_STRATEGIES = ("and", "or")
+# Default feature set; the canonical registry of available features lives in
+# src.features.extractor, which validates names at extraction time.
+DEFAULT_FEATURES = ("mean", "std", "max", "min", "active_ratio", "mean_delta")
+DEFAULT_MODEL_PATH = "data/models/isolation_forest.joblib"
+DEFAULT_METADATA_PATH = "data/models/isolation_forest.metadata.json"
 
 
 def _require_mapping(data: Any, key: str) -> dict[str, Any]:
@@ -219,6 +275,97 @@ def _parse_zones(data: dict[str, Any]) -> dict[str, ZoneConfig]:
     return zones
 
 
+def _optional_mapping(data: dict[str, Any], key: str) -> dict[str, Any]:
+    """Return a sub-mapping if present, otherwise an empty mapping.
+
+    Lets the new Phase 2 sections (detection/features/ml/training) be omitted so
+    older Phase 1 configs continue to load with sensible defaults.
+    """
+    value = data.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Config section '{key}' must be a mapping when provided.")
+    return value
+
+
+def _parse_detection(data: dict[str, Any]) -> DetectionConfig:
+    mode = str(data.get("mode", "optical_flow")).lower()
+    if mode not in VALID_MODES:
+        raise ValueError(
+            f"detection.mode must be one of {list(VALID_MODES)}; got '{mode}'."
+        )
+    return DetectionConfig(mode=mode)
+
+
+def _parse_features(data: dict[str, Any]) -> FeatureConfig:
+    window_size = int(data.get("window_size", 30))
+    step = int(data.get("step", 15))
+    raw_features = data.get("features", list(DEFAULT_FEATURES))
+    if not isinstance(raw_features, (list, tuple)) or not raw_features:
+        raise ValueError("features.features must be a non-empty list of names.")
+    features = tuple(str(name) for name in raw_features)
+    if window_size < 2:
+        raise ValueError("features.window_size must be >= 2.")
+    if step < 1:
+        raise ValueError("features.step must be >= 1.")
+    return FeatureConfig(window_size=window_size, step=step, features=features)
+
+
+def _parse_contamination(value: Any) -> float | str:
+    if value is None:
+        return "auto"
+    if isinstance(value, str):
+        return "auto" if value.lower() == "auto" else float(value)
+    return float(value)
+
+
+def _parse_max_samples(value: Any) -> int | float | str:
+    if value is None:
+        return "auto"
+    if isinstance(value, str):
+        return "auto" if value.lower() == "auto" else float(value)
+    if isinstance(value, bool):  # guard: bool is an int subclass
+        raise ValueError("training.max_samples must be 'auto', an int, or a float.")
+    if isinstance(value, int):
+        return int(value)
+    return float(value)
+
+
+def _parse_combine(data: dict[str, Any]) -> CombineConfig:
+    strategy = str(data.get("strategy", "and")).lower()
+    if strategy not in VALID_COMBINE_STRATEGIES:
+        raise ValueError(
+            f"ml.combine.strategy must be one of {list(VALID_COMBINE_STRATEGIES)}; "
+            f"got '{strategy}'."
+        )
+    return CombineConfig(strategy=strategy)
+
+
+def _parse_ml(data: dict[str, Any]) -> MlConfig:
+    return MlConfig(
+        model_path=str(data.get("model_path", DEFAULT_MODEL_PATH)),
+        metadata_path=str(data.get("metadata_path", DEFAULT_METADATA_PATH)),
+        combine=_parse_combine(_optional_mapping(data, "combine")),
+    )
+
+
+def _parse_training(data: dict[str, Any], ml: MlConfig) -> TrainingConfig:
+    n_estimators = int(data.get("n_estimators", 100))
+    random_state = int(data.get("random_state", 42))
+    if n_estimators <= 0:
+        raise ValueError("training.n_estimators must be > 0.")
+    return TrainingConfig(
+        contamination=_parse_contamination(data.get("contamination")),
+        random_state=random_state,
+        n_estimators=n_estimators,
+        max_samples=_parse_max_samples(data.get("max_samples")),
+        feature_csv=str(data.get("feature_csv", "data/processed/features.csv")),
+        model_output=str(data.get("model_output", ml.model_path)),
+        metadata_output=str(data.get("metadata_output", ml.metadata_path)),
+    )
+
+
 def load_config(path: str | Path) -> AppConfig:
     """Load and validate an application YAML config file."""
     config_path = Path(path)
@@ -231,6 +378,7 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError("Configuration file must contain a YAML mapping.")
 
+    ml = _parse_ml(_optional_mapping(raw, "ml"))
     return AppConfig(
         video=_parse_video(_require_mapping(raw, "video")),
         logging=_parse_logging(_require_mapping(raw, "logging")),
@@ -239,5 +387,9 @@ def load_config(path: str | Path) -> AppConfig:
             _require_mapping(raw, "visualization")
         ),
         zones=_parse_zones(_require_mapping(raw, "zones")),
+        detection=_parse_detection(_optional_mapping(raw, "detection")),
+        features=_parse_features(_optional_mapping(raw, "features")),
+        ml=ml,
+        training=_parse_training(_optional_mapping(raw, "training"), ml),
     )
 

@@ -1,2 +1,2 @@
-"""Feature extraction package reserved for Phase 2."""
+"""Motion feature extraction and dataset generation."""
 

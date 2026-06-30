@@ -30,6 +30,43 @@ visualization:
   font_scale: 0.55
   line_thickness: 2
 
+# Detection mode: optical_flow (Phase 1), ml (Isolation Forest), or combined.
+detection:
+  mode: optical_flow
+
+# Sliding-window motion features shared by training and ML inference.
+features:
+  window_size: 30   # frames per feature window
+  step: 15          # window stride used when generating the training dataset
+  features:
+    - mean
+    - std
+    - max
+    - min
+    - active_ratio
+    - mean_delta
+
+# ML inference settings. The model is the source of truth for the feature
+# definition at inference time (loaded from the metadata file below).
+ml:
+  model_path: data/models/isolation_forest.joblib
+  metadata_path: data/models/isolation_forest.metadata.json
+  combine:
+    # 'and' -> idle only when optical flow AND ML agree (high precision).
+    # 'or'  -> idle when either signal fires (high recall).
+    strategy: and
+
+# Isolation Forest training configuration (window_size/step/features come from
+# the 'features' section so training and inference always stay consistent).
+training:
+  contamination: auto
+  random_state: 42
+  n_estimators: 100
+  max_samples: auto
+  feature_csv: data/processed/features.csv
+  model_output: data/models/isolation_forest.joblib
+  metadata_output: data/models/isolation_forest.metadata.json
+
 zones:
   CMUS:
     enabled: true

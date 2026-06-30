@@ -19,14 +19,14 @@ class OverlayRenderer:
     def draw(
         self,
         frame: np.ndarray,
-        zone_results: list[tuple[Zone, float, ZoneDetectionState]],
+        zone_results: list[tuple[Zone, ZoneDetectionState]],
     ) -> np.ndarray:
         """Render all zone results on a copy of the frame."""
         if not self.config.enabled:
             return frame
 
         output = frame.copy()
-        for zone, _motion_score, state in zone_results:
+        for zone, state in zone_results:
             color = (0, 0, 255) if state.is_idle else (0, 180, 0)
             label = (
                 f"{zone.name}: {'IDLE' if state.is_idle else 'ACTIVE'} "
