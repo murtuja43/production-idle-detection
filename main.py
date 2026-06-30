@@ -16,10 +16,11 @@ from src.optical_flow.dense_flow import DenseOpticalFlow
 from src.pipeline.motion_pipeline import MotionPipeline
 from src.preprocessing.roi import ZoneRegistry
 from src.preprocessing.video_loader import VideoProcessor
+from src.reporting.report import ReportAggregator
 from src.utils.config import AppConfig, MlConfig, load_config
 from src.utils.csv_logger import CsvIdleLogger
 from src.utils.logger import configure_logging
-from src.visualization.overlay import OverlayRenderer
+from src.visualization.overlay import OverlayRenderer, OverlayZone
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,6 +133,12 @@ def run_pipeline(
 
     include_ml = active_mode != "optical_flow"
     with processor, CsvIdleLogger(csv_path, include_ml=include_ml) as csv_logger:
+        # fps is known only after the processor is opened (inside the context).
+        aggregator = ReportAggregator(
+            zone_names=[zone.name for zone in zones.enabled_zones],
+            mode=active_mode,
+            fps=processor.fps,
+        )
         progress = tqdm(
             total=processor.frame_count or None,
             desc="Processing frames",
@@ -139,9 +146,35 @@ def run_pipeline(
         )
         try:
             for frame_motion in pipeline.iter_motion(processor):
-                zone_results = []
+                overlay_items = []
                 for evaluation in evaluator.evaluate_frame(frame_motion):
-                    zone_results.append((evaluation.zone, evaluation.final_state))
+                    ml_result = evaluation.ml_result
+                    anomaly_score = (
+                        ml_result.score
+                        if ml_result is not None and ml_result.window_ready
+                        else None
+                    )
+                    is_anomaly = bool(
+                        ml_result is not None
+                        and ml_result.window_ready
+                        and ml_result.is_anomaly
+                    )
+                    overlay_items.append(
+                        OverlayZone(
+                            zone=evaluation.zone,
+                            is_idle=evaluation.is_idle,
+                            motion_score=evaluation.motion_score,
+                            threshold=evaluation.zone.motion_threshold,
+                            idle_seconds=evaluation.final_state.idle_seconds,
+                            anomaly_score=anomaly_score,
+                        )
+                    )
+                    aggregator.update(
+                        zone_name=evaluation.zone.name,
+                        motion_score=evaluation.motion_score,
+                        is_idle=evaluation.is_idle,
+                        is_anomaly=is_anomaly,
+                    )
                     csv_logger.write(
                         frame_index=frame_motion.frame_index,
                         timestamp_seconds=frame_motion.timestamp_seconds,
@@ -150,18 +183,27 @@ def run_pipeline(
                         state=evaluation.final_state,
                         mode=evaluation.mode,
                         optical_flow_idle=evaluation.optical_flow_state.is_idle,
-                        ml_result=evaluation.ml_result,
+                        ml_result=ml_result,
                     )
 
-                rendered = overlay.draw(frame_motion.frame, zone_results)
+                rendered = overlay.draw(frame_motion.frame, overlay_items, active_mode)
                 processor.write(rendered)
                 progress.update(1)
         finally:
             progress.close()
 
+    report = aggregator.build(video=input_video.name)
+    report_csv = csv_dir / config.logging.report_csv_filename
+    report_json = csv_dir / config.logging.report_json_filename
+    report.save_csv(report_csv)
+    report.save_json(report_json)
+    if config.logging.report_chart:
+        report.save_chart(csv_dir / config.logging.report_chart_filename)
+
     logger.info("Finished processing %s", input_video)
     logger.info("Processed video saved to %s", output_video)
     logger.info("CSV log saved to %s", csv_path)
+    logger.info("Report saved to %s and %s", report_csv, report_json)
 
 
 def main() -> None:

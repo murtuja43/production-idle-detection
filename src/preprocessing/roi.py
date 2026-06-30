@@ -90,7 +90,13 @@ class Zone:
         if mask is None:
             raise ValueError(f"Could not read mask for zone {self.name}: {path}")
         if mask.shape != (self.height, self.width):
-            mask = cv2.resize(mask, (self.width, self.height))
+            # Nearest-neighbour keeps the mask strictly binary (no interpolated
+            # edge values) when the source image size differs from the ROI.
+            mask = cv2.resize(
+                mask,
+                (self.width, self.height),
+                interpolation=cv2.INTER_NEAREST,
+            )
         return (mask > 0).astype(np.uint8)
 
 

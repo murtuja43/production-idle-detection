@@ -14,6 +14,10 @@ logging:
   level: INFO
   csv_dir: outputs
   csv_filename: idle_detection_log.csv
+  report_csv_filename: idle_report.csv
+  report_json_filename: idle_report.json
+  report_chart: true
+  report_chart_filename: idle_report.png
 
 optical_flow:
   pyr_scale: 0.5
@@ -26,7 +30,6 @@ optical_flow:
 
 visualization:
   enabled: true
-  draw_motion_heatmap: false
   font_scale: 0.55
   line_thickness: 2
 
@@ -84,6 +87,10 @@ zones:
       brightness_threshold: 230
       min_component_area: 4
       dilate_iterations: 1
+      kernel_size: 3
+      # Optional: also require low saturation (0-255) so only white/blue-white
+      # welding glare is suppressed, not genuinely coloured moving parts.
+      # saturation_threshold: 60
 
   COP:
     enabled: true

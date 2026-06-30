@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from src.features.extractor import AVAILABLE_FEATURES
+
 
 @dataclass(frozen=True)
 class ResizeConfig:
@@ -30,11 +32,15 @@ class VideoConfig:
 
 @dataclass(frozen=True)
 class LoggingConfig:
-    """Application logging and CSV settings."""
+    """Application logging, CSV, and report settings."""
 
     level: str
     csv_dir: str
     csv_filename: str
+    report_csv_filename: str
+    report_json_filename: str
+    report_chart: bool
+    report_chart_filename: str
 
 
 @dataclass(frozen=True)
@@ -55,7 +61,6 @@ class VisualizationConfig:
     """Overlay rendering settings."""
 
     enabled: bool
-    draw_motion_heatmap: bool
     font_scale: float
     line_thickness: int
 
@@ -72,12 +77,20 @@ class RoiConfig:
 
 @dataclass(frozen=True)
 class SparkFilterConfig:
-    """CMUS spark filtering settings."""
+    """CMUS spark/glare filtering settings.
+
+    A pixel is treated as spark/glare when it is bright (>= ``brightness_threshold``)
+    and, when ``saturation_threshold`` is set, also low-saturation (<= that value),
+    which targets the white/blue-white glare of welding without masking genuinely
+    coloured moving parts. Such pixels are excluded from motion scoring.
+    """
 
     enabled: bool = False
     brightness_threshold: int = 230
     min_component_area: int = 4
     dilate_iterations: int = 1
+    kernel_size: int = 3
+    saturation_threshold: int | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +208,14 @@ def _parse_logging(data: dict[str, Any]) -> LoggingConfig:
         level=str(data.get("level", "INFO")),
         csv_dir=str(data.get("csv_dir", "outputs")),
         csv_filename=str(data.get("csv_filename", "idle_detection_log.csv")),
+        report_csv_filename=str(data.get("report_csv_filename", "idle_report.csv")),
+        report_json_filename=str(
+            data.get("report_json_filename", "idle_report.json")
+        ),
+        report_chart=bool(data.get("report_chart", True)),
+        report_chart_filename=str(
+            data.get("report_chart_filename", "idle_report.png")
+        ),
     )
 
 
@@ -213,7 +234,6 @@ def _parse_optical_flow(data: dict[str, Any]) -> OpticalFlowConfig:
 def _parse_visualization(data: dict[str, Any]) -> VisualizationConfig:
     return VisualizationConfig(
         enabled=bool(data.get("enabled", True)),
-        draw_motion_heatmap=bool(data.get("draw_motion_heatmap", False)),
         font_scale=float(data.get("font_scale", 0.55)),
         line_thickness=int(data.get("line_thickness", 2)),
     )
@@ -234,15 +254,35 @@ def _parse_roi(data: dict[str, Any], zone_name: str) -> RoiConfig:
     return parsed
 
 
-def _parse_spark_filter(data: dict[str, Any]) -> SparkFilterConfig:
+def _parse_spark_filter(data: dict[str, Any], zone_name: str) -> SparkFilterConfig:
     spark_data = data.get("spark_filter", {})
     if not isinstance(spark_data, dict):
-        raise ValueError("spark_filter must be a mapping when provided.")
+        raise ValueError(
+            f"Zone '{zone_name}' spark_filter must be a mapping when provided."
+        )
+    brightness = int(spark_data.get("brightness_threshold", 230))
+    if not 0 <= brightness <= 255:
+        raise ValueError(
+            f"Zone '{zone_name}' spark_filter.brightness_threshold must be 0-255."
+        )
+    kernel_size = int(spark_data.get("kernel_size", 3))
+    if kernel_size < 1:
+        raise ValueError(
+            f"Zone '{zone_name}' spark_filter.kernel_size must be >= 1."
+        )
+    saturation_raw = spark_data.get("saturation_threshold")
+    saturation = None if saturation_raw is None else int(saturation_raw)
+    if saturation is not None and not 0 <= saturation <= 255:
+        raise ValueError(
+            f"Zone '{zone_name}' spark_filter.saturation_threshold must be 0-255."
+        )
     return SparkFilterConfig(
         enabled=bool(spark_data.get("enabled", False)),
-        brightness_threshold=int(spark_data.get("brightness_threshold", 230)),
+        brightness_threshold=brightness,
         min_component_area=int(spark_data.get("min_component_area", 4)),
         dilate_iterations=int(spark_data.get("dilate_iterations", 1)),
+        kernel_size=kernel_size,
+        saturation_threshold=saturation,
     )
 
 
@@ -262,7 +302,7 @@ def _parse_zones(data: dict[str, Any]) -> dict[str, ZoneConfig]:
             ),
             sensitivity=float(raw_zone.get("sensitivity", 1.0)),
             mask_path=raw_zone.get("mask_path"),
-            spark_filter=_parse_spark_filter(raw_zone),
+            spark_filter=_parse_spark_filter(raw_zone, zone_name),
         )
         if zones[zone_name].motion_threshold <= 0:
             raise ValueError(f"Zone '{zone_name}' motion_threshold must be > 0.")
@@ -305,6 +345,12 @@ def _parse_features(data: dict[str, Any]) -> FeatureConfig:
     if not isinstance(raw_features, (list, tuple)) or not raw_features:
         raise ValueError("features.features must be a non-empty list of names.")
     features = tuple(str(name) for name in raw_features)
+    unknown = [name for name in features if name not in AVAILABLE_FEATURES]
+    if unknown:
+        raise ValueError(
+            f"features.features contains unknown feature(s): {unknown}. "
+            f"Available: {sorted(AVAILABLE_FEATURES)}."
+        )
     if window_size < 2:
         raise ValueError("features.window_size must be >= 2.")
     if step < 1:
@@ -316,8 +362,15 @@ def _parse_contamination(value: Any) -> float | str:
     if value is None:
         return "auto"
     if isinstance(value, str):
-        return "auto" if value.lower() == "auto" else float(value)
-    return float(value)
+        if value.lower() == "auto":
+            return "auto"
+        value = float(value)
+    contamination = float(value)
+    if not 0.0 < contamination <= 0.5:
+        raise ValueError(
+            "training.contamination must be 'auto' or a float in (0, 0.5]."
+        )
+    return contamination
 
 
 def _parse_max_samples(value: Any) -> int | float | str:
@@ -328,8 +381,13 @@ def _parse_max_samples(value: Any) -> int | float | str:
     if isinstance(value, bool):  # guard: bool is an int subclass
         raise ValueError("training.max_samples must be 'auto', an int, or a float.")
     if isinstance(value, int):
+        if value <= 0:
+            raise ValueError("training.max_samples (int) must be > 0.")
         return int(value)
-    return float(value)
+    number = float(value)
+    if not 0.0 < number <= 1.0:
+        raise ValueError("training.max_samples (float) must be in (0, 1].")
+    return number
 
 
 def _parse_combine(data: dict[str, Any]) -> CombineConfig:

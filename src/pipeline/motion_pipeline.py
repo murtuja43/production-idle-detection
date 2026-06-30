@@ -90,6 +90,7 @@ class MotionPipeline:
                         flow_field=flow_field,
                         gray_frame=gray,
                         zone=zone,
+                        color_frame=frame,
                     )
                     zone_motions.append(ZoneMotion(zone=zone, motion_score=score))
 

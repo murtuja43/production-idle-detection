@@ -91,7 +91,6 @@ class PipelineSmokeTest(unittest.TestCase):
             },
             "visualization": {
                 "enabled": True,
-                "draw_motion_heatmap": False,
                 "font_scale": 0.4,
                 "line_thickness": 1,
             },

@@ -36,11 +36,17 @@ class DenseOpticalFlow:
         flow_field: np.ndarray,
         gray_frame: np.ndarray,
         zone: Zone,
+        color_frame: np.ndarray | None = None,
     ) -> float:
-        """Calculate a filtered mean motion magnitude for one zone."""
+        """Calculate a filtered mean motion magnitude for one zone.
+
+        ``color_frame`` (BGR) is optional and only used when a zone's spark filter
+        enables saturation-based glare gating; everything else relies solely on
+        the grayscale frame, so callers may omit it.
+        """
         roi_flow = zone.crop_array(flow_field)
         roi_gray = zone.crop_array(gray_frame)
-        magnitude, _angle = cv2.cartToPolar(roi_flow[..., 0], roi_flow[..., 1])
+        magnitude = np.hypot(roi_flow[..., 0], roi_flow[..., 1])
         valid_mask = np.ones(magnitude.shape, dtype=np.uint8)
 
         roi_mask = self._get_roi_mask(zone)
@@ -48,7 +54,10 @@ class DenseOpticalFlow:
             valid_mask = valid_mask & roi_mask
 
         if zone.is_cmus and zone.spark_filter.enabled:
-            spark_mask = self._build_spark_mask(roi_gray, zone)
+            roi_color = (
+                zone.crop_array(color_frame) if color_frame is not None else None
+            )
+            spark_mask = self._build_spark_mask(roi_gray, roi_color, zone)
             valid_mask = valid_mask & (1 - spark_mask)
 
         valid_values = magnitude[valid_mask.astype(bool)]
@@ -63,12 +72,26 @@ class DenseOpticalFlow:
         return self._mask_cache[zone.name]
 
     @staticmethod
-    def _build_spark_mask(gray_roi: np.ndarray, zone: Zone) -> np.ndarray:
-        """Create a binary mask for bright CMUS welding sparks."""
+    def _build_spark_mask(
+        gray_roi: np.ndarray,
+        color_roi: np.ndarray | None,
+        zone: Zone,
+    ) -> np.ndarray:
+        """Create a binary mask (1 = spark/glare) for the CMUS welding area."""
         config = zone.spark_filter
         bright = (gray_roi >= config.brightness_threshold).astype(np.uint8)
+
+        # Optional colour gate: only treat bright pixels that are also
+        # low-saturation (white/blue-white glare) as sparks.
+        if config.saturation_threshold is not None and color_roi is not None:
+            hsv = cv2.cvtColor(color_roi, cv2.COLOR_BGR2HSV)
+            low_saturation = (hsv[..., 1] <= config.saturation_threshold).astype(
+                np.uint8
+            )
+            bright = bright & low_saturation
+
         if config.dilate_iterations > 0:
-            kernel = np.ones((3, 3), dtype=np.uint8)
+            kernel = np.ones((config.kernel_size, config.kernel_size), dtype=np.uint8)
             bright = cv2.dilate(
                 bright,
                 kernel,

@@ -57,8 +57,7 @@ class MlPipelineSmokeTest(unittest.TestCase):
                 "iterations": 3, "poly_n": 5, "poly_sigma": 1.2, "flags": 0,
             },
             "visualization": {
-                "enabled": True, "draw_motion_heatmap": False,
-                "font_scale": 0.4, "line_thickness": 1,
+                "enabled": True, "font_scale": 0.4, "line_thickness": 1,
             },
             "detection": {"mode": mode},
             "features": {

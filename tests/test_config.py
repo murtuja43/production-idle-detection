@@ -70,6 +70,29 @@ class Phase2ConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._load_with_overrides(ml={"combine": {"strategy": "xor"}})
 
+    def test_unknown_feature_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self._load_with_overrides(
+                features={"window_size": 30, "step": 15, "features": ["bogus"]}
+            )
+
+    def test_out_of_range_contamination_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self._load_with_overrides(training={"contamination": 0.9})
+
+    def test_invalid_max_samples_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self._load_with_overrides(training={"max_samples": 2.5})
+
+    def test_invalid_spark_brightness_raises(self) -> None:
+        base = yaml.safe_load(Path("configs/default.yaml").read_text(encoding="utf-8"))
+        base["zones"]["CMUS"]["spark_filter"]["brightness_threshold"] = 999
+        path = Path(tempfile.mkdtemp()) / "config.yaml"
+        with path.open("w", encoding="utf-8") as file:
+            yaml.safe_dump(base, file)
+        with self.assertRaises(ValueError):
+            load_config(path)
+
 
 if __name__ == "__main__":
     unittest.main()
