@@ -28,6 +28,7 @@ clean, mock-backed architecture for future PLC/ERP integration.
 - [Training](#training)
 - [Inference](#inference)
 - [Reporting](#reporting)
+- [Evaluation](#evaluation)
 - [Future PLC / ERP Integration (Method 2)](#future-plc--erp-integration-method-2)
 - [Testing](#testing)
 - [Limitations](#limitations)
@@ -108,13 +109,15 @@ production-idle-detection/
 ├── data/
 │   ├── videos/                  # input videos (sample.mp4 included)
 │   ├── processed/               # annotated output videos
-│   └── models/                  # trained models + metadata
+│   ├── models/                  # trained models + metadata
+│   └── ground_truth_example.csv # evaluation ground-truth format example
 ├── outputs/                     # CSV logs and reports
 ├── src/
 │   ├── detection/               # idle_detector, combined, evaluator
 │   ├── erp/                     # ErpClient ABC + Null/Mock (Method 2)
 │   ├── features/                # extractor, dataset
 │   ├── integration/            # reconciliation (Method 2 blueprint)
+│   ├── evaluation/              # metrics, ground truth, plots (standalone)
 │   ├── ml/                      # model (persistence), inference
 │   ├── optical_flow/            # dense_flow (+ spark/glare filtering)
 │   ├── pipeline/                # motion_pipeline (shared engine)
@@ -127,6 +130,7 @@ production-idle-detection/
 ├── tests/                       # unit + integration tests
 ├── main.py                      # inference CLI
 ├── train.py                     # training CLI
+├── evaluate.py                  # evaluation CLI (standalone)
 ├── requirements.txt
 └── README.md
 ```
@@ -342,6 +346,45 @@ totals). Charting failures never abort a run.
 
 ---
 
+## Evaluation
+
+`evaluate.py` is a **standalone** utility (it does not import or modify the
+detection pipeline) that scores predictions against labelled ground truth and
+visualizes the comparison.
+
+```bash
+python evaluate.py \
+    --predictions outputs/idle_detection_log.csv \
+    --ground-truth data/ground_truth_example.csv \
+    --default-label active
+```
+
+It reads the per-frame detection CSV (its `is_idle` column is the prediction for
+whichever mode produced it) and a ground-truth CSV of labelled timestamp ranges,
+aligns them per zone and timestamp, and reports — per zone and overall —
+**Accuracy, Precision, Recall, F1, and the confusion matrix** (positive class =
+idle). Outputs:
+
+- `outputs/evaluation_metrics.json` — summary + per-zone + overall metrics
+- `outputs/evaluation_metrics.csv` — per-zone (and overall) metrics table
+- `outputs/evaluation_comparison.png` — predicted vs actual idle timeline per zone
+
+Ground-truth CSV format (columns are case-insensitive; a row without a `zone`
+applies to all zones):
+
+```csv
+zone,start_seconds,end_seconds,label
+CMUS,2.0,4.0,idle
+COP,3.0,6.0,idle
+COK,0.0,6.0,active
+```
+
+Accepted aliases: start (`start`/`start_seconds`/`start_time`), end
+(`end`/`end_seconds`/`end_time`), label (`label`/`state`/`is_idle`; values
+idle/active, 1/0, true/false). Frames outside every interval take
+`--default-label` (`active` default, or `idle`, or `skip` to exclude them from
+scoring).
+
 ## Future PLC / ERP Integration (Method 2)
 
 Method 2 is intentionally **not wired into the main pipeline**. It is fully
@@ -382,7 +425,8 @@ Coverage: config parsing + validation (incl. backward compatibility), the shared
 gating, feature extraction and dataset generation, model persistence and
 training, ML inference warmup, combine logic and the mode evaluator (incl.
 optical-flow backward-compatibility), reporting, PLC/ERP reconciliation, overlay
-rendering, and end-to-end optical-flow / ml / combined smoke tests.
+rendering, evaluation (metrics, ground-truth parsing, alignment, plotting), and
+end-to-end optical-flow / ml / combined smoke tests.
 
 ---
 

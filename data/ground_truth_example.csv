@@ -1,0 +1,10 @@
+zone,start_seconds,end_seconds,label
+CMUS,0.0,2.0,active
+CMUS,2.0,4.0,idle
+CMUS,4.0,6.0,active
+COP,0.0,3.0,active
+COP,3.0,6.0,idle
+COK,0.0,6.0,active
+CSK,0.0,1.5,idle
+CSK,1.5,6.0,active
+CSLT,0.0,6.0,idle
